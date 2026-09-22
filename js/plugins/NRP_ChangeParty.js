@@ -1,9 +1,9 @@
-//=============================================================================
+﻿//=============================================================================
 // NRP_ChangeParty.js
 //=============================================================================
 /*:
  * @target MZ
- * @plugindesc v1.01 Implemented a party change screen.
+ * @plugindesc v1.05 Implemented a party change screen.
  * @author Takeshi Sunagawa (http://newrpg.seesaa.net/)
  * @url http://newrpg.seesaa.net/article/500297653.html
  *
@@ -158,7 +158,7 @@
 
 /*:ja
  * @target MZ
- * @plugindesc v1.01 パーティ編成画面を実装。
+ * @plugindesc v1.05 パーティ編成画面を実装。
  * @author 砂川赳（http://newrpg.seesaa.net/）
  * @url http://newrpg.seesaa.net/article/500297653.html
  *
@@ -452,8 +452,12 @@ Scene_ChangeParty.prototype.commandFormation = function() {
     this._statusWindow.activate();
     this._statusWindow.setHandler("ok", this.onFormationOk.bind(this));
     this._statusWindow.setHandler("cancel", this.onFormationCancel.bind(this));
+    this._statusWindow.setHandler("left", this.toBenchActor.bind(this));
+    this._statusWindow.setHandler("right", this.toBenchActor.bind(this));
     this._benchWindow.setHandler("ok", this.onFormationBenchOk.bind(this));
     this._benchWindow.setHandler("cancel", this.onFormationBenchCancel.bind(this));
+    this._benchWindow.setHandler("left", this.toBattleActor.bind(this));
+    this._benchWindow.setHandler("right", this.toBattleActor.bind(this));
 };
 
 /**
@@ -633,10 +637,6 @@ Scene_ChangeParty.prototype.toBenchActor = function() {
 
     this._statusWindow.deactivate();
     this._benchWindow.activate();
-
-    // 入力をクリア
-    // ※これをやらないとtoBattleActorが連続で呼ばれてしまう。
-    Input.clear();
 };
 
 /**
@@ -653,10 +653,6 @@ Scene_ChangeParty.prototype.toBattleActor = function() {
 
     this._benchWindow.deactivate();
     this._statusWindow.activate();
-
-    // 入力をクリア
-    // ※これをやらないとtoBenchActorが連続で呼ばれてしまう。
-    Input.clear();
 };
 
 /**
@@ -753,12 +749,40 @@ Window_ChangeParty.prototype.actor = function(index) {
     return $gameParty.members()[index];
 };
 
-Window_ChangeParty.prototype.cursorLeft = function(wrap) {
-    SceneManager._scene.toBenchActor();
+/**
+ * ●入力制御
+ */
+Window_ChangeParty.prototype.processHandling = function() {
+    // 左右の入力でSceneに処理を渡す。
+    if (this.isOpenAndActive()) {
+        if (this.isHandled("left") && Input.isTriggered("left")) {
+            return this.processLeft();
+        }
+        if (this.isHandled("right") && Input.isTriggered("right")) {
+            return this.processRight();
+        }
+    }
+    Window_Selectable.prototype.processHandling.call(this);
 };
 
-Window_ChangeParty.prototype.cursorRight = function(wrap) {
-    SceneManager._scene.toBenchActor();
+/**
+ * ●左制御
+ */
+Window_ChangeParty.prototype.processLeft = function() {
+    this.playCursorSound();
+    this.updateInputData();
+    this.deactivate();
+    this.callHandler("left");
+};
+
+/**
+ * ●右制御
+ */
+Window_ChangeParty.prototype.processRight = function() {
+    this.playCursorSound();
+    this.updateInputData();
+    this.deactivate();
+    this.callHandler("right");
 };
 
 /**
@@ -907,12 +931,40 @@ Window_ChangePartyBench.prototype.actor = function(index) {
     return benchMembers[index];
 };
 
-Window_ChangePartyBench.prototype.cursorLeft = function(wrap) {
-    SceneManager._scene.toBattleActor();
+/**
+ * ●入力制御
+ */
+Window_ChangePartyBench.prototype.processHandling = function() {
+    // 左右の入力でSceneに処理を渡す。
+    if (this.isOpenAndActive()) {
+        if (this.isHandled("left") && Input.isTriggered("left")) {
+            return this.processLeft();
+        }
+        if (this.isHandled("right") && Input.isTriggered("right")) {
+            return this.processRight();
+        }
+    }
+    Window_Selectable.prototype.processHandling.call(this);
 };
 
-Window_ChangePartyBench.prototype.cursorRight = function(wrap) {
-    SceneManager._scene.toBattleActor();
+/**
+ * ●左制御
+ */
+Window_ChangePartyBench.prototype.processLeft = function() {
+    this.playCursorSound();
+    this.updateInputData();
+    this.deactivate();
+    this.callHandler("left");
+};
+
+/**
+ * ●右制御
+ */
+Window_ChangePartyBench.prototype.processRight = function() {
+    this.playCursorSound();
+    this.updateInputData();
+    this.deactivate();
+    this.callHandler("right");
 };
 
 /**
@@ -1001,6 +1053,18 @@ Window_ChangePartyBench.prototype.isUsePage = function() {
 //-----------------------------------------------------------------------------
 
 /**
+ * ●メニュー画面で参照するアクターを設定
+ */
+const _Game_Party_setMenuActor = Game_Party.prototype.setMenuActor;
+Game_Party.prototype.setMenuActor = function(actor) {
+    // アクターが無効なら処理しない。
+    if (!actor) {
+        return;
+    }
+    _Game_Party_setMenuActor.apply(this, arguments);
+};
+
+/**
  * 【独自】最大戦闘人数を設定する。
  */
 Game_Party.prototype.setMaxBattleMembers = function(no) {
@@ -1042,8 +1106,11 @@ if (pAllowRelease && pShowOtherPage) {
      * ●表示項目数
      */
     Window_MenuStatus.prototype.maxItems = function() {
-        // 空白分を追加
-        return $gameParty.size() + this.numVisibleRows() - $gameParty.battleMembers().length;
+        // １ページの表示人数を取得
+        // ※競合を避けるためthis.maxVisibleItems()は使わない。
+        const maxVisibleItems = this.numVisibleRows() * this.maxCols();
+        // 空白分を追加（パーティ人数 + （１ページの表示人数 - 戦闘人数））
+        return $gameParty.size() + maxVisibleItems - $gameParty.battleMembers().length;
     };
 
     /**
@@ -1051,9 +1118,10 @@ if (pAllowRelease && pShowOtherPage) {
      */
     Window_MenuStatus.prototype.actor = function(index) {
         const members = $gameParty.members();
-
+        // １ページの表示人数を取得
+        const maxVisibleItems = this.numVisibleRows() * this.maxCols();
         // 空白を挿入する。
-        const blankLength = this.numVisibleRows() - $gameParty.battleMembers().length;
+        const blankLength = maxVisibleItems - $gameParty.battleMembers().length;
         for (let i = 0; i < blankLength; i++) {
             members.splice($gameParty.battleMembers().length, 0, null);
         }
@@ -1161,6 +1229,21 @@ if (pDisableReserveFormation) {
 //-----------------------------------------------------------------------------
 
 if (pDisableReserveSkill) {
+    /**
+     * ●メニュー画面でのアイテム使用者の決定
+     * ※内部的に『薬の知識』の率が高いアクターを選択している模様。
+     */
+    const _Scene_Item_user = Scene_Item.prototype.user;
+    Scene_Item.prototype.user = function() {
+        const keepInBattle = $gameParty._inBattle;
+        // 一時的に使用者を戦闘メンバーに限定（控えメンバーは無効にする。）
+        $gameParty._inBattle = true;
+        const user = _Scene_Item_user.apply(this, arguments);
+        // 元に戻す。
+        $gameParty._inBattle = keepInBattle;
+        return user;
+    };
+
     /**
      * ●スキルの使用可否
      */
